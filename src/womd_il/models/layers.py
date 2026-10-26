@@ -4,6 +4,37 @@ from __future__ import annotations
 
 import torch
 from torch import Tensor, nn
+from torch.nn.attention import SDPBackend, sdpa_kernel
+
+# FLASH needs attn_mask=None. Padded banks stay on PyTorch's default SDPA autotune.
+_FLASH_BACKENDS = [
+    SDPBackend.FLASH_ATTENTION,
+    SDPBackend.CUDNN_ATTENTION,
+    SDPBackend.EFFICIENT_ATTENTION,
+    SDPBackend.MATH,
+]
+
+
+def compact_kv_pad(
+    kv: Tensor, pad: Tensor | None
+) -> tuple[Tensor, Tensor | None]:
+    """Trim shared trailing pad; return ``pad=None`` when every key is valid (Flash).
+
+    Safe to call once per bank before stacked cross-attn (one GPU sync).
+    Assumes invalid keys are trailing (``pack_valid_tokens`` convention).
+    """
+    if pad is None or not pad.any():
+        return kv, None
+    lengths = (~pad).sum(dim=-1)
+    max_len = int(lengths.max().item())
+    if max_len <= 0:
+        return kv, pad
+    if max_len < kv.size(1):
+        kv = kv[:, :max_len].contiguous()
+        pad = pad[:, :max_len]
+    if not pad.any():
+        return kv, None
+    return kv, pad
 
 
 class MLP(nn.Module):
@@ -44,7 +75,12 @@ class PreNormSelfAttention(nn.Module):
 
     def forward(self, x: Tensor, key_padding_mask: Tensor | None = None) -> Tensor:
         h = self.norm(x)
-        y, _ = self.attn(h, h, h, key_padding_mask=key_padding_mask, need_weights=False)
+        # Flash needs mask=None; with padding leave backend autotune (forcing can regress).
+        if key_padding_mask is None:
+            with sdpa_kernel(_FLASH_BACKENDS):
+                y, _ = self.attn(h, h, h, key_padding_mask=None, need_weights=False)
+        else:
+            y, _ = self.attn(h, h, h, key_padding_mask=key_padding_mask, need_weights=False)
         return x + self.drop(y)
 
 
@@ -65,7 +101,11 @@ class PreNormCrossAttention(nn.Module):
     ) -> Tensor:
         qn = self.norm_q(q)
         kvn = self.norm_kv(kv)
-        y, _ = self.attn(qn, kvn, kvn, key_padding_mask=key_padding_mask, need_weights=False)
+        if key_padding_mask is None:
+            with sdpa_kernel(_FLASH_BACKENDS):
+                y, _ = self.attn(qn, kvn, kvn, key_padding_mask=None, need_weights=False)
+        else:
+            y, _ = self.attn(qn, kvn, kvn, key_padding_mask=key_padding_mask, need_weights=False)
         y = self.drop(y)
         return q + y if residual else y
 

@@ -48,6 +48,15 @@ def _maybe_wandb(cfg: DictConfig):
     return wandb
 
 
+def _batch_to_device(batch: dict, device: torch.device) -> dict:
+    """H2D copy; ``non_blocking`` pairs with ``DataLoader(pin_memory=True)``."""
+    non_blocking = device.type == "cuda"
+    return {
+        k: (v.to(device, non_blocking=non_blocking) if torch.is_tensor(v) else v)
+        for k, v in batch.items()
+    }
+
+
 def _run_open_loop(
     policy,
     loader,
@@ -62,7 +71,7 @@ def _run_open_loop(
         for i, batch in enumerate(loader):
             if i >= max_batches:
                 break
-            batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
+            batch = _batch_to_device(batch, device)
             bundle = policy.infer(batch)
             xy = bundle.xyh[..., :2]
             m = open_loop_metrics(
@@ -95,7 +104,7 @@ def _run_metric_heads(policy, loader, device, max_batches: int = 20) -> dict[str
         for i, batch in enumerate(loader):
             if i >= max_batches:
                 break
-            batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
+            batch = _batch_to_device(batch, device)
             bundle = policy.infer(batch)
             logits = bundle.extras.get("metric_logits")
             idx = bundle.extras.get("stage_index")
@@ -210,6 +219,9 @@ def train(cfg: DictConfig) -> None:
     device = resolve_device(cfg.device)
     torch.manual_seed(int(cfg.seed))
     np.random.seed(int(cfg.seed))
+    n_workers = int(cfg.num_workers)
+    pin_memory = device.type == "cuda"
+    persistent_workers = n_workers > 0
 
     data_cfg = PackConfig.from_cfg(cfg.data)
     cache_root = cfg.decoder.get("metric_cache")
@@ -262,7 +274,9 @@ def train(cfg: DictConfig) -> None:
             batch_size=cfg.batch_size,
             shuffle=False,
             collate_fn=packed_collate,
-            num_workers=int(cfg.num_workers),
+            num_workers=n_workers,
+            pin_memory=pin_memory,
+            persistent_workers=persistent_workers,
         )
     if windows is not None:
         cap = cfg.decoder.get("subsample_cap", None)
@@ -278,8 +292,10 @@ def train(cfg: DictConfig) -> None:
         batch_size=cfg.batch_size,
         shuffle=True,
         collate_fn=packed_collate,
-        num_workers=int(cfg.num_workers),
+        num_workers=n_workers,
         drop_last=False,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
     )
 
     # Mission signal = on-route lane corridor in map_feat (not preferred-path XY tokens).
@@ -412,7 +428,7 @@ def train(cfg: DictConfig) -> None:
         policy.train()
         pbar = tqdm(train_loader, desc=f"epoch {epoch}")
         for batch in pbar:
-            batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
+            batch = _batch_to_device(batch, device)
             opt.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=use_amp):
                 stats = policy.train_step(batch)

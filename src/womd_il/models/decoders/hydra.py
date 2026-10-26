@@ -35,6 +35,7 @@ from womd_il.models.layers import (
     ParallelTripleDecoderBlock,
     TripleCrossOnlyDecoderBlock,
     TripleDecoderBlock,
+    compact_kv_pad,
 )
 
 
@@ -672,10 +673,15 @@ class HydraDecoder(DecoderBase):
                     "decoder.triple_cross=true requires factorized encoder with "
                     "ego_tokens / agent_tokens / map_tokens"
                 )
-            agent_pad = self._pad_mask(enc.agent_mask)
-            map_pad = self._pad_mask(enc.map_mask)
-            ego_pad = self._pad_mask(enc.ego_mask)
-            agent_kv, map_kv, ego_kv = enc.agent_tokens, enc.map_tokens, enc.ego_tokens
+            agent_kv, agent_pad = compact_kv_pad(
+                enc.agent_tokens, self._pad_mask(enc.agent_mask)
+            )
+            map_kv, map_pad = compact_kv_pad(
+                enc.map_tokens, self._pad_mask(enc.map_mask)
+            )
+            ego_kv, ego_pad = compact_kv_pad(
+                enc.ego_tokens, self._pad_mask(enc.ego_mask)
+            )
 
             def _run_tri(qi: Tensor) -> Tensor:
                 for layer in self.layers:
@@ -701,9 +707,12 @@ class HydraDecoder(DecoderBase):
                     "decoder.dual_cross=true requires encoder.factorized=true "
                     "(missing agent_tokens / map_tokens on SceneEncoding)"
                 )
-            agent_pad = self._pad_mask(enc.agent_mask)
-            map_pad = self._pad_mask(enc.map_mask)
-            agent_kv, map_kv = enc.agent_tokens, enc.map_tokens
+            agent_kv, agent_pad = compact_kv_pad(
+                enc.agent_tokens, self._pad_mask(enc.agent_mask)
+            )
+            map_kv, map_pad = compact_kv_pad(
+                enc.map_tokens, self._pad_mask(enc.map_mask)
+            )
 
             def _run(qi: Tensor) -> Tensor:
                 for layer in self.layers:
