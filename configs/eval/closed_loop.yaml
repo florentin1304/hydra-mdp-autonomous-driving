@@ -1,0 +1,30 @@
+# @package _global_
+defaults:
+  - /data: womd
+  - /model: wayformer
+  - /decoder: hydra
+  - _self_
+
+ckpt: checkpoints/hydra_4s/best.pt
+split: val
+neighbors: log
+backend: packed
+max_scenarios: 64
+horizon: 80
+device: cuda
+viz_dir: outputs/viz
+viz_every: 8
+out: outputs/closed_loop.json
+h_exec: 1
+mode_select: geomean
+cost:
+  topk: 256
+  look_ahead: 20
+  w_im: 1.0
+  w_ov: 16.0
+  w_speed: 0.2
+  w_off: 8.0
+
+hydra:
+  job:
+    chdir: false

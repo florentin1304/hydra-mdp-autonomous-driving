@@ -1,0 +1,14 @@
+# Aggressive parallel download settings for WOMD shards.
+[GSUtil]
+parallel_process_count = 32
+parallel_thread_count = 16
+sliced_object_download_threshold = 50M
+sliced_object_download_max_components = 8
+sliced_object_download_component_size = 50M
+# Prefer HTTPS; keep connections hot.
+prefer_api = xml
+[Boto]
+# More concurrent HTTPS connections to GCS.
+http_socket_timeout = 60
+num_retries = 8
+max_retry_delay = 30

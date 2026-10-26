@@ -1,0 +1,75 @@
+syntax = "proto2";
+
+package waymo.open_dataset;
+
+import "womd_il/protos/map.proto";
+
+message ObjectState {
+  optional double center_x = 2;
+  optional double center_y = 3;
+  optional double center_z = 4;
+  optional float length = 5;
+  optional float width = 6;
+  optional float height = 7;
+  optional float heading = 8;
+  optional float velocity_x = 9;
+  optional float velocity_y = 10;
+  optional bool valid = 11;
+}
+
+message Track {
+  enum ObjectType {
+    TYPE_UNSET = 0;
+    TYPE_VEHICLE = 1;
+    TYPE_PEDESTRIAN = 2;
+    TYPE_CYCLIST = 3;
+    TYPE_OTHER = 4;
+  }
+  optional int32 id = 1;
+  optional ObjectType object_type = 2;
+  repeated ObjectState states = 3;
+}
+
+message DynamicMapState {
+  repeated TrafficSignalLaneState lane_states = 1;
+}
+
+message RequiredPrediction {
+  enum DifficultyLevel {
+    NONE = 0;
+    LEVEL_1 = 1;
+    LEVEL_2 = 2;
+  }
+  optional int32 track_index = 1;
+  optional DifficultyLevel difficulty = 2;
+}
+
+message PathPoint {
+  optional double x = 1;
+  optional double y = 2;
+  optional double z = 3;
+  optional float arc_length = 4;
+  optional int64 id = 5;
+}
+
+message Path {
+  repeated PathPoint path_points = 1;
+  optional bool on_route = 2;
+  optional int32 id = 3;
+}
+
+message Scenario {
+  optional string scenario_id = 5;
+  repeated double timestamps_seconds = 1;
+  optional int32 current_time_index = 10;
+  repeated Track tracks = 2;
+  repeated DynamicMapState dynamic_map_states = 7;
+  repeated MapFeature map_features = 8;
+  optional int32 sdc_track_index = 6;
+  repeated int32 objects_of_interest = 4;
+  repeated RequiredPrediction tracks_to_predict = 11;
+  // WOMD 1.3.1 sdc_paths. Field 9 is reserved on public GitHub master;
+  // 1.3.1 data may use 9 or a later number, so both are accepted.
+  repeated Path sdc_paths = 9;
+  repeated Path sdc_paths_alt = 14;
+}

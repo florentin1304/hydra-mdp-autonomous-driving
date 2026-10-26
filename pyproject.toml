@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "womd-il"
+version = "0.1.0"
+description = "Hydra-MDP style imitation learning on the Waymo Open Motion Dataset (Wayformer encoder + discrete trajectory decoder)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [{name = "womd-il"}]
+dependencies = [
+  "numpy>=1.24",
+  "torch>=2.1",
+  "h5py>=3.9",
+  "hydra-core>=1.3",
+  "omegaconf>=2.3",
+  "tqdm>=4.66",
+  "matplotlib>=3.8",
+  "protobuf>=4.25",
+]
+
+[project.optional-dependencies]
+log = [
+  "wandb>=0.16",
+]
+dev = [
+  "pytest>=7.4",
+  "ruff>=0.4",
+]
+
+[project.scripts]
+womd-train = "womd_il.train:main"
+womd-eval-open = "womd_il.eval_open_loop:main"
+womd-eval-closed = "womd_il.eval_closed_loop:main"
+womd-render = "womd_il.render:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]

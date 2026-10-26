@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Data and artifacts (WOMD is licensed; do not commit)
+# Leading slash: only the repo-root data/ tree (not configs/data/).
+/data/
+*.h5
+*.hdf5
+*.tfrecord
+*.npy
+*.npz
+
+# Training
+checkpoints/
+outputs/
+wandb/
+multirun/
+.hydra/
+*.pt
+*.mp4
+*.ckpt
+
+# Editor / OS
+.idea/
+.vscode/
+.cursor/
+*.swp
+.DS_Store

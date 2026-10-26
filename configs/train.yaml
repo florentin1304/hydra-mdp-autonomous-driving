@@ -1,0 +1,53 @@
+defaults:
+  - data: womd
+  - model: wayformer
+  - decoder: hydra
+  - _self_
+
+seed: 0
+device: cuda
+epochs: 20
+batch_size: 32
+lr: 1.0e-4
+min_lr: 1.0e-5
+weight_decay: 0.01
+grad_clip: 1.0
+amp: true
+# Compile train_step + infer (not Module.forward — policy has none). First
+# steps are slow while inductor warms up; Hydra's Python branches still graph-break.
+compile: false
+collapse_factor: 2.5
+# Stop when the best.pt metric has not improved for `patience` val
+# epochs, after `min_epochs`. 0 patience = train the full schedule.
+early_stop:
+  patience: 5
+  min_epochs: 3
+  min_delta: 0.0
+log_every: 20
+val_every: 1
+horizons: [10, 20, 30, 40, 50, 60, 70, 80]
+# Buffered trajectory IoU radii (m). Higher IoU is better.
+iou_buffers: [0.5, 1.0, 2.0]
+ckpt_dir: checkpoints/hydra_4s
+# Resume weights + epoch/step from a checkpoint. true → ${ckpt_dir}/last.pt
+resume: null
+max_train_steps: null
+num_workers: 16
+
+wandb:
+  enabled: false
+  project: womd-il
+  name: null
+
+# Always run after training: closed-loop metrics + BEV videos.
+report:
+  max_scenarios: 64
+  viz_n: 8
+  neighbors: [log, idm]
+  horizon: 80
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
