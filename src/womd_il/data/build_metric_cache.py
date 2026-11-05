@@ -49,8 +49,13 @@ def fill_labels(
     desc: str = "labels",
     out_h5: h5py.Dataset | None = None,
     out_offset: int = 0,
+    on_rows=None,
 ) -> np.ndarray | None:
-    """Label ``n_local`` rows. Write into ``out_h5[out_offset:]`` when given, else return uint8 array."""
+    """Label ``n_local`` rows. Write into ``out_h5[out_offset:]`` when given, else return uint8 array.
+
+    ``on_rows(total_written)`` is called after each chunk so a caller can
+    checkpoint progress (see ``metric_cache`` ``rows_written``).
+    """
     k = int(vocab.size(0))
     out: np.ndarray | None = None
     if out_h5 is None:
@@ -78,6 +83,8 @@ def fill_labels(
                 assert out is not None
                 out[cursor : cursor + b] = arr
             cursor += b
+            if on_rows is not None:
+                on_rows(out_offset + cursor)
     if cursor != n_local:
         raise RuntimeError(f"wrote {cursor} rows, expected {n_local}")
     return out
@@ -137,6 +144,7 @@ def write_h5_from_array(path: Path, labels: np.ndarray, *, vocab_sha_hex: str, p
         path, n, k, vocab_sha_hex=vocab_sha_hex, packed=packed, n_metrics=m, metric_names=METRIC_NAMES
     )
     handle["labels"][:] = labels
+    handle.attrs["rows_written"] = int(n)
     handle.flush()
     handle.close()
 
@@ -206,6 +214,9 @@ def cache_metrics(
         handle = create_metric_cache(
             out_path, n, k, vocab_sha_hex=sha, packed=h5, n_metrics=len(METRIC_NAMES), metric_names=METRIC_NAMES
         )
+        def _mark(written: int) -> None:
+            handle.attrs["rows_written"] = int(written)
+
         try:
             fill_labels(
                 ds,
@@ -216,6 +227,7 @@ def cache_metrics(
                 n_local=n,
                 out_h5=handle["labels"],
                 out_offset=0,
+                on_rows=_mark,
             )
             handle.flush()
             _print_stats(handle["labels"], path=out_path, sha=sha, k=k, n=n)

@@ -51,8 +51,21 @@ def create_metric_cache(
     path.parent.mkdir(parents=True, exist_ok=True)
     f = h5py.File(path, "w")
     chunks = (min(32, n), k, n_metrics)
-    f.create_dataset("labels", (n, k, n_metrics), dtype=LABEL_DTYPE, chunks=chunks, compression="lzf")
+    # ``maxshape`` on axis 0 lets an append-only writer (DAgger pool) grow the
+    # cache in place instead of rewriting it.
+    f.create_dataset(
+        "labels",
+        (n, k, n_metrics),
+        maxshape=(None, k, n_metrics),
+        dtype=LABEL_DTYPE,
+        chunks=chunks,
+        compression="lzf",
+    )
     f.attrs["version"] = int(CACHE_VERSION)
+    # Rows actually filled. HDF5 zero-fills unwritten chunks, so without this a
+    # crash mid-fill leaves a full-length cache of all-zero (= PDMS 0) labels
+    # that would otherwise validate and silently train.
+    f.attrs["rows_written"] = 0
     f.attrs["vocab_sha"] = str(vocab_sha_hex)
     f.attrs["packed"] = str(packed)
     f.attrs["n"] = int(n)
@@ -85,3 +98,12 @@ def validate_metric_cache(
         raise ValueError(f"metric cache K={shape[1]} != vocab K={k}")
     if n is not None and int(shape[0]) < int(n):
         raise ValueError(f"metric cache N={shape[0]} < dataset N={n}; rebuild the cache")
+    # Absent on caches written before rows_written existed; only enforce it when
+    # the writer stamped it.
+    if n is not None and "rows_written" in handle.attrs:
+        written = int(handle.attrs["rows_written"])
+        if written < int(n):
+            raise ValueError(
+                f"metric cache has {written} filled rows but the dataset needs {n}; "
+                "the previous fill was interrupted — resume or rebuild the cache"
+            )

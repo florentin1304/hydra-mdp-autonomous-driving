@@ -198,6 +198,7 @@ def test_metric_cache_loads_and_skips_on_perturb(synthetic_h5, pack_cfg, tmp_pat
     handle = create_metric_cache(path, 4, k, vocab_sha_hex="deadbeef", packed=synthetic_h5)
     handle["labels"][0] = 0
     handle["labels"][1:] = 1
+    handle.attrs["rows_written"] = 4
     handle.close()
     ds = WOMDPackedDataset(
         synthetic_h5,
