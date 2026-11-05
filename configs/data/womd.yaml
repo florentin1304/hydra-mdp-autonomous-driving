@@ -18,9 +18,9 @@ current_step: 10
 dt: 0.1
 target_mode: sdc
 num_workers: 16
-# PlanTF compounding-error fix (train only): jitter the current origin
-# then rebuild every agent-centric tensor. Supervise the log future in
-# that frame — do not generate a return-to-log spline.
+# Pose jitter (train only): rebuild agent-centric tensors, supervise log future.
+# Default off. Gaussian via xy_std/yaw_std, or PlanTF uniform via
+# dist=uniform + lon/lat/yaw_{low,high} (see apply_origin_perturb).
 perturb:
   prob: 0.0
   xy_std: 0.2

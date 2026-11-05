@@ -148,11 +148,31 @@ def apply_origin_perturb(
         prob = float(perturb.get("prob", 0.0))
         if rng is None or prob <= 0.0 or rng.random() >= prob:
             return origin_xy, origin_yaw
-        xy_std = float(perturb.get("xy_std", 0.5))
-        yaw_std = float(perturb.get("yaw_std", 0.2))
-        lon = float(np.clip(rng.normal(0.0, xy_std), -3.0 * xy_std, 3.0 * xy_std))
-        lat = float(np.clip(rng.normal(0.0, xy_std), -3.0 * xy_std, 3.0 * xy_std))
-        dyaw = float(np.clip(rng.normal(0.0, yaw_std), -3.0 * yaw_std, 3.0 * yaw_std))
+        # Optional PlanTF-style UniformNoise on [x, y, yaw] when dist=uniform
+        # or *_{low,high} bounds are set; otherwise Gaussian via xy_std / yaw_std.
+        use_uniform = (
+            str(perturb.get("dist", "")).lower() == "uniform"
+            or any(
+                k in perturb
+                for k in ("lon_low", "lon_high", "lat_low", "lat_high", "yaw_low", "yaw_high")
+            )
+        )
+        if use_uniform:
+            lon = float(
+                rng.uniform(float(perturb.get("lon_low", -1.0)), float(perturb.get("lon_high", 1.0)))
+            )
+            lat = float(
+                rng.uniform(float(perturb.get("lat_low", -0.75)), float(perturb.get("lat_high", 0.75)))
+            )
+            dyaw = float(
+                rng.uniform(float(perturb.get("yaw_low", -0.35)), float(perturb.get("yaw_high", 0.35)))
+            )
+        else:
+            xy_std = float(perturb.get("xy_std", 0.5))
+            yaw_std = float(perturb.get("yaw_std", 0.2))
+            lon = float(np.clip(rng.normal(0.0, xy_std), -3.0 * xy_std, 3.0 * xy_std))
+            lat = float(np.clip(rng.normal(0.0, xy_std), -3.0 * xy_std, 3.0 * xy_std))
+            dyaw = float(np.clip(rng.normal(0.0, yaw_std), -3.0 * yaw_std, 3.0 * yaw_std))
     delta = np.array([lon, lat], dtype=np.float32)
     new_xy = inverse_agent_centric_xy(delta, origin_xy, origin_yaw).astype(np.float32)
     new_yaw = float(wrap_angle(origin_yaw + dyaw))

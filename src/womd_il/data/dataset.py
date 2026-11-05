@@ -15,13 +15,28 @@ from womd_il.data.metric_cache import validate_metric_cache
 from womd_il.data.schema import DATASETS, PackConfig
 
 
-def _as_perturb_dict(perturb: Any) -> dict[str, float]:
+def _as_perturb_dict(perturb: Any) -> dict[str, Any]:
     if perturb is None:
         return {}
-    out: dict[str, float] = {}
-    for k in ("prob", "xy_std", "yaw_std", "lon", "lat", "dyaw"):
+    out: dict[str, Any] = {}
+    for k in (
+        "prob",
+        "xy_std",
+        "yaw_std",
+        "lon",
+        "lat",
+        "dyaw",
+        "lon_low",
+        "lon_high",
+        "lat_low",
+        "lat_high",
+        "yaw_low",
+        "yaw_high",
+    ):
         if k in perturb:
             out[k] = float(perturb[k])
+    if "dist" in perturb:
+        out["dist"] = str(perturb["dist"])
     return out
 
 
