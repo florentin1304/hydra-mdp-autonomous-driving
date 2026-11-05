@@ -17,25 +17,11 @@ from womd_il.sim.rollout import rollout_policy
 from womd_il.utils import load_policy_from_ckpt
 from womd_il.viz.video import render_closed_loop_video
 
-# Same variety set as checkpoints/hydra_4s_epo/videos_diverse_log/manifest.txt
-PICKED = [
-    (1349, "straight", "2b5de09e898af8aa"),
-    (1101, "straight", "9ace9b3267cddfe6"),
-    (2211, "straight", "c5321022ff385608"),
-    (540, "turn", "ce0be5afd6b03891"),
-    (1642, "turn", "90b672a3a529af98"),
-    (4142, "turn", "1a9e189a99369a8c"),
-    (1386, "traffic_light", "781d434bee8a6447"),
-    (171, "traffic_light", "797779c184e54223"),
-    (2093, "traffic_light", "76bb4b8a12314fb2"),
-    (3367, "yield", "9cd6397da0030636"),
-    (1028, "yield", "def8bd3ba11bf807"),
-    (4169, "yield", "fb356ccbe025fbba"),
-    (2770, "stop_sign", "b580633b6a506c11"),
-    (246, "stop_sign", "fb059a2c9e505e9d"),
-    (23, "crosswalk", "137a96e2448a70f2"),
-    (1754, "crosswalk", "d01f4dddfbc907c0"),
-]
+def load_picked(suite: Path | None) -> list[tuple[int, str, str]]:
+    if suite is None or not suite.exists():
+        suite = Path("configs/eval/diversity_suite.json")
+    rows = json.loads(suite.read_text())
+    return [(int(r["idx"]), str(r["tag"]), str(r.get("sid") or "")) for r in rows]
 
 
 def main() -> None:
@@ -46,6 +32,7 @@ def main() -> None:
     p.add_argument("--h-exec", type=int, default=1)
     p.add_argument("--horizon", type=int, default=80)
     p.add_argument("--device", default="cuda")
+    p.add_argument("--suite", type=Path, default=Path("configs/eval/diversity_suite.json"))
     p.add_argument(
         "--select",
         default="argmax",
@@ -56,14 +43,15 @@ def main() -> None:
 
     args.out.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
-    print(f"loading {args.ckpt} on {device}  select={args.select}", flush=True)
+    picked = load_picked(args.suite)
+    print(f"loading {args.ckpt} on {device}  select={args.select}  n={len(picked)}", flush=True)
     policy, _ = load_policy_from_ckpt(args.ckpt, device=device)
     policy.eval()
     ds = WOMDPackedDataset(args.h5, target_mode="sdc", cfg=PackConfig())
 
     rows = []
     manifest_lines = []
-    for j, (idx, tag, expect_sid) in enumerate(tqdm(PICKED, desc=f"diverse:{args.select}")):
+    for j, (idx, tag, expect_sid) in enumerate(tqdm(picked, desc=f"diverse:{args.select}")):
         sample = ds.get_world_sample(idx)
         sid = str(sample.get("scenario_id", idx)).replace("/", "_")
         if expect_sid and expect_sid not in sid and sid != expect_sid:
@@ -76,6 +64,7 @@ def main() -> None:
             device=device,
             h_exec=args.h_exec,
             mode_select=args.select,
+            early_stop_on_fail=True,
         )
         m = closed_loop_metrics(state, sample)
         m["scenario_index"] = idx

@@ -2,13 +2,43 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import torch
 
 from womd_il.data.transforms import inverse_agent_centric_xy, wrap_angle
+from womd_il.losses.hydra import METRIC_INDEX
 from womd_il.sim.bicycle import traj_to_actions
 from womd_il.sim.obs import features_to_batch
 from womd_il.sim.replay import PackedSimulator, SimState, _offroad
+
+# Hydra-MDP Eq. 11, same point as configs/decoder/hydra.yaml, EPO weight 0.
+# Metric sigmoids point the trained way: 1 is compliant (no collision, on road).
+_HYDRA_W_IM = 0.1
+_HYDRA_W_NC = 1.0
+_HYDRA_W_DAC = 1.0
+_HYDRA_W_RULE = 1.0
+_HYDRA_W_TTC = 5.0
+_HYDRA_W_C = 2.0
+_HYDRA_W_EP = 5.0
+
+
+def hydra_mdp_scores(im_scores: torch.Tensor, metric_logits: torch.Tensor) -> torch.Tensor:
+    """Score to maximize: imitation log plus NC, DAC, and the 5/2/5 rule log."""
+    mprob = torch.sigmoid(metric_logits.float())
+    s_nc = mprob[..., METRIC_INDEX["nc"]]
+    s_dac = mprob[..., METRIC_INDEX["dac"]]
+    s_ttc = mprob[..., METRIC_INDEX["ttc"]]
+    s_c = mprob[..., METRIC_INDEX["hc"]]
+    s_ep = mprob[..., METRIC_INDEX["progress"]]
+    rule = _HYDRA_W_TTC * s_ttc + _HYDRA_W_C * s_c + _HYDRA_W_EP * s_ep
+    return (
+        _HYDRA_W_IM * torch.log(im_scores.float().clamp_min(1e-6))
+        + _HYDRA_W_NC * torch.log(s_nc.clamp_min(1e-6))
+        + _HYDRA_W_DAC * torch.log(s_dac.clamp_min(1e-6))
+        + _HYDRA_W_RULE * torch.log(rule.clamp_min(1e-6))
+    )
 
 
 def _topk_indices(scores: torch.Tensor, topk: int) -> np.ndarray:
@@ -197,6 +227,8 @@ def rollout_policy(
     mode_select: str = "argmax",
     cost: dict | None = None,
     n_viz_modes: int = 128,
+    early_stop_on_fail: bool = False,
+    on_replan: Callable[..., None] | None = None,
 ) -> SimState:
     device = torch.device(device)
     policy.eval()
@@ -204,7 +236,6 @@ def rollout_policy(
     sim.reset()
     action_q: list[tuple[float, float]] = []
     steps = 0
-    decoder = getattr(policy, "decoder", None)
     # Caller ``h_exec`` wins (0.1 s = 1). Decoder default is only a fallback.
     n_commit = max(int(h_exec), 1)
     max_t = sample["xyz"].shape[1] - 1
@@ -221,14 +252,20 @@ def rollout_policy(
             pool = bundle.extras.get("pool_scores") if bundle.extras else None
             if pool is not None and select in ("cost", "occupancy"):
                 scores = pool[0]
-            # Blend imitation + EPO softmax scores (mix checkpoints).
+            # Blend / pick imitation + EPO softmax scores (mix checkpoints).
             extras = bundle.extras or {}
-            if select in ("avg", "mean", "arith") and "im_scores" in extras and "epo_scores" in extras:
+            if select in ("im", "imitation", "imi") and "im_scores" in extras:
+                scores = extras["im_scores"][0]
+            elif select in ("epo",) and "epo_scores" in extras:
+                scores = extras["epo_scores"][0]
+            elif select in ("avg", "mean", "arith") and "im_scores" in extras and "epo_scores" in extras:
                 scores = 0.5 * extras["im_scores"][0] + 0.5 * extras["epo_scores"][0]
             elif select in ("geomean", "geometric") and "im_scores" in extras and "epo_scores" in extras:
                 im_s = extras["im_scores"][0].clamp_min(1e-12)
                 epo_s = extras["epo_scores"][0].clamp_min(1e-12)
                 scores = torch.sqrt(im_s * epo_s)
+            elif select in ("hydra", "hydra_mdp") and "im_scores" in extras and "metric_logits" in extras:
+                scores = hydra_mdp_scores(extras["im_scores"][0], extras["metric_logits"][0])
             origin = batch["current_xyh_world"][0].detach().cpu().numpy()
             if select == "occupancy":
                 k = _occupancy_mode(scores, bundle.xyh[0], origin, sim)
@@ -238,6 +275,8 @@ def rollout_policy(
                 k = _cost_mode(scores, bundle.xyh[0], origin, sim, **kw)
             else:
                 k = int(torch.argmax(scores).item())
+            if on_replan is not None:
+                on_replan(sim=sim, bundle=bundle, batch=batch, pick=k, origin=origin)
             xyh = bundle.xyh[0, k]
             xy_agent = xyh[:, :2].detach().cpu().numpy()
             world_xy = inverse_agent_centric_xy(xy_agent, origin[:2], float(origin[2]))
@@ -267,4 +306,7 @@ def rollout_policy(
         accel, kappa = action_q.pop(0)
         sim.step(accel, kappa)
         steps += 1
+        if early_stop_on_fail and sim.state.collisions and sim.state.offroad:
+            if sim.state.collisions[-1] or sim.state.offroad[-1]:
+                break
     return sim.state

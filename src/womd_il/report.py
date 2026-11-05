@@ -55,6 +55,7 @@ def closed_loop_eval(
     h_exec: int = 1,
     mode_select: str = "argmax",
     cost: dict | None = None,
+    early_stop_on_fail: bool = False,
 ) -> dict[str, Any]:
     n = len(dataset)
     if max_scenarios is not None:
@@ -73,6 +74,7 @@ def closed_loop_eval(
             h_exec=h_exec,
             mode_select=mode_select,
             cost=cost,
+            early_stop_on_fail=early_stop_on_fail,
         )
         m = closed_loop_metrics(state, sample)
         m["scenario_id"] = str(sample.get("scenario_id", i))
