@@ -427,7 +427,7 @@ def test_hydra_metric_heads_train_and_infer(synthetic_h5, pack_cfg):
     assert "loss_metric" in stats
     assert torch.isfinite(stats["loss"])
     stats["loss"].backward()
-    assert policy.decoder.metric_stopgrad
+    assert policy.decoder.metric_stopgrad is False
     assert any(
         p.grad is not None and float(p.grad.abs().sum()) > 0
         for p in policy.decoder.metric_head.parameters()

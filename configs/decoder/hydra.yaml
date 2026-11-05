@@ -36,14 +36,15 @@ pdms_scale: 0.0
 subsample_cap: 12
 # Optional ADE/PDMS winner cache for class subsample when windows_path is unset.
 winner_cache: null
-metric_stopgrad: true
+# false: metric BCE backprops into encoder (better NC/DAC); true: heads-only.
+metric_stopgrad: false
 # Multiply metric BCE before adding to policy loss (use <1 when unfreezing trunk).
 metric_loss_scale: 1.0
 # Balanced BCE: w1=1/(2p), w0=1/(2(1-p)) so rare class (usually failures) counts.
 metric_class_weighted: true
-# EMA momentum for per-stage P(y=1). Separate EMA per LDiP stage K (4096/256/16).
-# 0 = use batch rates only (no EMA).
-metric_rate_ema: 0.99
+# P(y=1) from cumulative label counts (converges to the data prior). Legacy name;
+# EMA is no longer used.
+metric_rate_ema: 0.0
 # Optional clamp on each of w0/w1 (e.g. 10) when metric_stopgrad=false.
 metric_pos_weight_cap: null
 # Per-metric MLP (fused GEMM / bmm over M — heads run together, not a loop).

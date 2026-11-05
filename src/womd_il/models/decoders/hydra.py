@@ -39,6 +39,32 @@ from womd_il.models.layers import (
 )
 
 
+def resolve_vocab_path(path: str | Path | None) -> Path | None:
+    """Find a vocab file even when the process cwd is a subdirectory.
+
+    Checkpoints store ``data/artifacts/hydra_vocab_4s.npy`` relative to the
+    repo. Jupyter often starts in ``notebooks/``, which used to miss that
+    file and build a random T=80 vocab that cannot load T=40 weights.
+    """
+    if not path:
+        return None
+    p = Path(path)
+    if p.exists():
+        return p
+    if p.is_absolute():
+        return None
+    here = Path.cwd()
+    for root in [here, *here.parents]:
+        cand = root / p
+        if cand.exists():
+            return cand
+    repo = Path(__file__).resolve().parents[4]
+    cand = repo / p
+    if cand.exists():
+        return cand
+    return None
+
+
 class ParallelMetricHeads(nn.Module):
     """Independent MLP per metric; all M heads computed in fused GEMMs (no head loop).
 
@@ -356,14 +382,13 @@ class HydraDecoder(DecoderBase):
         epo_entropy: float = 0.05,
         epo_temperature: float = 1.0,
         epo_entropy_min_k: float = 256.0,
-        metric_stopgrad: bool = True,
+        metric_stopgrad: bool = False,
         # Scale on metric BCE before it is added to the policy loss (unfreeze-safe).
         metric_loss_scale: float = 1.0,
         # Balanced BCE: w1=1/(2p), w0=1/(2(1-p)); rare class (usually y=0) upweighted.
         metric_class_weighted: bool = True,
-        # EMA momentum for per-stage P(y=1). Separate buffer per LDiP stage K.
-        # 0 disables EMA (batch rates only).
-        metric_rate_ema: float = 0.99,
+        # Deprecated (ignored): P(y=1) now uses cumulative label counts, not EMA.
+        metric_rate_ema: float = 0.0,
         # Clamp each of w0/w1 when unfreezing trunk; None = uncapped.
         metric_pos_weight_cap: float | None = None,
         metric_head_layers: int = 3,
@@ -446,7 +471,7 @@ class HydraDecoder(DecoderBase):
         self.metric_stopgrad = bool(metric_stopgrad)
         self.metric_loss_scale = float(metric_loss_scale)
         self.metric_class_weighted = bool(metric_class_weighted)
-        self.metric_rate_ema = float(metric_rate_ema)
+        self.metric_rate_ema = float(metric_rate_ema)  # unused; kept for old configs
         self.metric_pos_weight_cap = (
             None if metric_pos_weight_cap is None else float(metric_pos_weight_cap)
         )
@@ -464,14 +489,14 @@ class HydraDecoder(DecoderBase):
         self.cross_only = bool(cross_only)
         if vocab is None:
             vocab = self._load_or_random(vocab_path, vocab_size, future_steps)
+            found = resolve_vocab_path(vocab_path)
             if (
-                vocab_path
-                and Path(vocab_path).exists()
+                found is not None
                 and vocab.shape[0] < 32
                 and int(vocab_size) >= 256
             ):
                 raise ValueError(
-                    f"Hydra vocab {vocab_path} has K={vocab.shape[0]} proposals, but "
+                    f"Hydra vocab {found} has K={vocab.shape[0]} proposals, but "
                     f"decoder.vocab_size={vocab_size}. Rebuild with "
                     "scripts/build_hydra_vocab.py --k 4096 (this is usually a leftover "
                     "smoke-test file)."
@@ -503,7 +528,7 @@ class HydraDecoder(DecoderBase):
             f"metric_stopgrad={self.metric_stopgrad} "
             f"metric_loss_scale={self.metric_loss_scale:g} "
             f"metric_class_weighted={self.metric_class_weighted} "
-            f"metric_rate_ema={self.metric_rate_ema:g} "
+            f"metric_rate=count "
             f"metric_pos_weight_cap={self.metric_pos_weight_cap} "
             f"nms_radius={self.nms_radius:g} keep_winner={self.keep_winner} "
             f"vocab_self_attn={self.vocab_self_attn_layers} "
@@ -562,16 +587,16 @@ class HydraDecoder(DecoderBase):
                 n_layers=self.metric_head_layers,
                 chunk_k=max(self.query_chunk, 1),
             )
-            # Per-stage EMA of P(y=1): LDiP cascade has different label mixes at
-            # K=4096 vs 256 vs 16, so rates must not share one running average.
+            # Cumulative pos/total counts → empirical P(y=1) (converges to data
+            # prior). Indexed by cascade stage K so LDiP mixes stay separate.
             n_m = len(METRIC_NAMES)
             self.register_buffer(
-                "metric_pos_rate_ema",
-                torch.full((len(stages), n_m), 0.5),
+                "metric_pos_count",
+                torch.zeros(len(stages), n_m),
             )
             self.register_buffer(
-                "metric_pos_rate_ema_init",
-                torch.zeros(len(stages)),
+                "metric_label_count",
+                torch.zeros(len(stages), n_m),
             )
         else:
             self.metric_head = None
@@ -586,39 +611,34 @@ class HydraDecoder(DecoderBase):
 
     @torch.no_grad()
     def _metric_pos_rate_for_stage(self, stage_k: int, labels: Tensor) -> Tensor | None:
-        """Per-stage P(y=1) for balanced BCE; EMA keyed by cascade K.
+        """Running empirical P(y=1) from cumulative label counts.
 
-        Stages (4096 → 256 → 16) see different failure rates after pruning, so
-        each K keeps its own EMA. Returns ``None`` when class weighting is off.
+        Each step adds this batch's positives/totals; ``p = pos/total`` approaches
+        the true stage distribution (equal weight per label, unlike EMA).
         """
-        if not self.metric_class_weighted:
+        if not self.metric_class_weighted or self.metric_head is None:
             return None
-        batch_rate = labels.detach().float().mean(dim=tuple(range(labels.ndim - 1)))
-        if (
-            self.metric_rate_ema <= 0
-            or self.metric_head is None
-            or not hasattr(self, "metric_pos_rate_ema")
-        ):
-            return batch_rate
+        if not hasattr(self, "metric_pos_count"):
+            # Old checkpoints without count buffers: fall back to batch mean.
+            return labels.detach().float().mean(dim=tuple(range(labels.ndim - 1)))
+        y = labels.detach().float()
+        reduce_dims = tuple(range(y.ndim - 1))
+        pos = y.sum(dim=reduce_dims)
+        tot = torch.full_like(pos, float(y[..., 0].numel()))
         stages = self._stage_sizes(int(self.vocab.size(0)))
         try:
             si = stages.index(int(stage_k))
         except ValueError:
-            return batch_rate
-        if float(self.metric_pos_rate_ema_init[si]) < 0.5:
-            self.metric_pos_rate_ema[si].copy_(batch_rate)
-            self.metric_pos_rate_ema_init[si].fill_(1.0)
-            return batch_rate
-        rate = self.metric_pos_rate_ema[si].clone()
-        decay = float(self.metric_rate_ema)
-        self.metric_pos_rate_ema[si].mul_(decay).add_(batch_rate, alpha=1.0 - decay)
-        return rate
+            si = 0
+        self.metric_pos_count[si].add_(pos)
+        self.metric_label_count[si].add_(tot)
+        return self.metric_pos_count[si] / self.metric_label_count[si].clamp_min(1.0)
 
     @staticmethod
     def _load_or_random(path: str | None, k: int, t: int) -> np.ndarray:
-        if path and Path(path).exists():
-            arr = np.load(path)
-            return arr.astype(np.float32)
+        found = resolve_vocab_path(path)
+        if found is not None:
+            return np.load(found).astype(np.float32)
         rng = np.random.default_rng(0)
         speed = rng.uniform(2.0, 16.0, size=(k, 1))
         yaw_rate = rng.normal(0.0, 0.05, size=(k, 1))

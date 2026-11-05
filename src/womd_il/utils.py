@@ -126,7 +126,10 @@ def load_policy_from_ckpt(path: str | Path, device="cpu"):
     if cfg.get("model") is None or cfg.get("decoder") is None:
         raise ValueError(f"{path} has no saved model/decoder config")
     _bump_map_in_dim(cfg)
-    policy = build_policy(cfg.model, cfg.decoder).to(device)
+    # Vocab is a registered buffer: use the checkpoint tensor so the tokenizer
+    # width matches the weights even if ``vocab_path`` is missing from cwd.
+    vocab = ckpt.get("model", {}).get("decoder.vocab")
+    policy = build_policy(cfg.model, cfg.decoder, vocab=vocab).to(device)
     policy.load_state_dict(pad_state_dict_to_model(ckpt["model"], policy), strict=False)
     policy.eval()
     return policy, cfg

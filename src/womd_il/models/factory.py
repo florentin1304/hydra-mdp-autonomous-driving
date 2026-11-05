@@ -31,7 +31,7 @@ def build_encoder(model_cfg: Any) -> WayformerEncoder:
     return WayformerEncoder(**c)
 
 
-def build_decoder(decoder_cfg: Any, model_cfg: Any) -> HydraDecoder:
+def build_decoder(decoder_cfg: Any, model_cfg: Any, vocab: Any | None = None) -> HydraDecoder:
     d = _cfg_dict(decoder_cfg)
     m = _cfg_dict(model_cfg)
     name = str(d.pop("name", "hydra"))
@@ -44,10 +44,12 @@ def build_decoder(decoder_cfg: Any, model_cfg: Any) -> HydraDecoder:
     kwargs.setdefault("nhead", m.get("nhead", 8))
     kwargs.setdefault("d_ffn", m.get("d_ffn", 1024))
     kwargs.setdefault("dropout", m.get("dropout", 0.1))
+    if vocab is not None:
+        kwargs["vocab"] = vocab
     return HydraDecoder(**kwargs)
 
 
-def build_policy(model_cfg: Any, decoder_cfg: Any) -> WayformerPolicy:
+def build_policy(model_cfg: Any, decoder_cfg: Any, vocab: Any | None = None) -> WayformerPolicy:
     encoder = build_encoder(model_cfg)
-    decoder = build_decoder(decoder_cfg, model_cfg)
+    decoder = build_decoder(decoder_cfg, model_cfg, vocab=vocab)
     return WayformerPolicy(encoder, decoder)
