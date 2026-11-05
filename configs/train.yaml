@@ -39,6 +39,15 @@ wandb:
   project: womd-il
   name: null
 
+# Optional DAgger overlay (set by scripts/dagger_pipeline.py).
+dagger_pool: null
+dagger_metric_cache: null
+# Fraction of each epoch drawn from the DAgger pool (rest from base).
+# 0 = raw concat. Epoch length stays the base-set size when this is in (0, 1).
+dagger_pool_frac: 0.0
+# Load weights only (ignore saved epoch/step); used for DAgger fine-tunes.
+warm_start: null
+
 # Always run after training: closed-loop metrics + BEV videos.
 report:
   max_scenarios: 64

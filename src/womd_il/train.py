@@ -8,9 +8,10 @@ import hydra
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import ConcatDataset, DataLoader, Subset, WeightedRandomSampler
 from tqdm import tqdm
 
+from womd_il.data.dagger import DaggerOverlayDataset, pool_len
 from womd_il.data.dataset import WOMDPackedDataset, packed_collate
 from womd_il.data.metric_cache import resolve_metric_cache, vocab_sha
 from womd_il.data.subsample import class_cap_indices, load_pdms_winners, load_winners
@@ -287,25 +288,65 @@ def train(cfg: DictConfig) -> None:
                 train_ds = Subset(train_ds, idx.tolist())
     else:
         train_ds = _maybe_class_subsample(cfg, train_ds)
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=cfg.batch_size,
-        shuffle=True,
-        collate_fn=packed_collate,
-        num_workers=n_workers,
-        drop_last=False,
-        pin_memory=pin_memory,
-        persistent_workers=persistent_workers,
-    )
 
-    # Mission signal = on-route lane corridor in map_feat (not preferred-path XY tokens).
-    _probe = train_ds.dataset if isinstance(train_ds, Subset) else train_ds
+    dagger_pool = cfg.get("dagger_pool")
+    dagger_metric = cfg.get("dagger_metric_cache")
+    dagger_sampler = None
+    if dagger_pool and Path(str(dagger_pool)).exists() and pool_len(dagger_pool) > 0:
+        dcache = Path(str(dagger_metric)) if dagger_metric else None
+        if dcache is not None and not dcache.exists():
+            raise FileNotFoundError(
+                f"dagger_metric_cache missing: {dcache} (run cache_dagger_metrics first)"
+            )
+        dagger_ds = DaggerOverlayDataset(
+            cfg.data.train_file,
+            dagger_pool,
+            cfg=data_cfg,
+            metric_cache=dcache,
+            vocab_sha=sha,
+            vocab_size=k_vocab,
+        )
+        n_base = len(train_ds)
+        n_pool = len(dagger_ds)
+        train_ds = ConcatDataset([train_ds, dagger_ds])
+        print(f"DAgger concat: base={n_base} + pool={n_pool} → {len(train_ds)}")
+        pool_frac = float(cfg.get("dagger_pool_frac", 0.0) or 0.0)
+        if 0.0 < pool_frac < 1.0:
+            w_base = (1.0 - pool_frac) / max(n_base, 1)
+            w_pool = pool_frac / max(n_pool, 1)
+            mix_w = torch.cat(
+                [torch.full((n_base,), w_base), torch.full((n_pool,), w_pool)]
+            )
+            # Keep epoch length = base set so the pool cannot 10× the step count.
+            dagger_sampler = WeightedRandomSampler(
+                mix_w, num_samples=n_base, replacement=True
+            )
+            print(
+                f"DAgger mix: pool_frac={pool_frac:.2f}  "
+                f"epoch_samples={n_base} (base-sized, not raw concat)"
+            )
+        else:
+            print(
+                "DAgger mix: raw concat (set dagger_pool_frac in (0,1) to cap pool influence)"
+            )
+
+    # Mission probe BEFORE the DataLoader forks workers: HDF5 is not fork-safe
+    # once a handle is live. Close afterwards so workers open their own files.
+    _probe = train_ds
+    while isinstance(_probe, Subset):
+        _probe = _probe.dataset
+    if isinstance(_probe, ConcatDataset):
+        _probe = _probe.datasets[0]
+        while isinstance(_probe, Subset):
+            _probe = _probe.dataset
     _n_probe = min(32, len(_probe))
     _on_ok = 0
     for _i in range(_n_probe):
         _feat = _probe[_i]
         if float(np.asarray(_feat["map_feat"][..., -1]).sum()) >= 1.0:
             _on_ok += 1
+    if hasattr(_probe, "close"):
+        _probe.close()
     _use_rt = bool(cfg.model.get("use_route_tokens", False))
     print(
         f"Mission probe: map_on_route_bit={_on_ok}/{_n_probe}  "
@@ -316,6 +357,18 @@ def train(cfg: DictConfig) -> None:
             f"Training map_feat on_route bit empty ({_on_ok}/{_n_probe}). "
             "Repack so H5 contains map_on_route."
         )
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=cfg.batch_size,
+        shuffle=dagger_sampler is None,
+        sampler=dagger_sampler,
+        collate_fn=packed_collate,
+        num_workers=n_workers,
+        drop_last=False,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+    )
 
     policy = build_policy(cfg.model, cfg.decoder).to(device)
     policy = apply_torch_compile(policy, cfg)
@@ -350,6 +403,15 @@ def train(cfg: DictConfig) -> None:
     collapse_factor = float(cfg.get("collapse_factor", 2.5))
     es_patience, es_min_epochs, es_min_delta = _early_stop_cfg(cfg)
     stale = 0
+
+    # Weights only (DAgger fine-tune): ignore saved epoch/step/best.
+    warm = cfg.get("warm_start")
+    if warm:
+        warm_path = Path(str(warm))
+        if not warm_path.exists():
+            raise FileNotFoundError(f"warm_start checkpoint not found: {warm_path}")
+        load_checkpoint(warm_path, policy, map_location=device)
+        print(f"warm_start weights from {warm_path} (epoch/step reset)")
 
     resume_raw = cfg.get("resume", None)
     resume_path: Path | None = None

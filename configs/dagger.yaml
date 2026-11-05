@@ -1,0 +1,100 @@
+defaults:
+  - data: womd
+  - model: wayformer
+  - decoder: hydra
+  - _self_
+
+# Iteration 0 = existing trained checkpoint (eval only, then collect).
+init_ckpt: checkpoints/hydra_4s_sde_triple_par_metfix/best.pt
+ckpt_root: checkpoints/hydra_4s_dagger
+n_iters: 3
+# Fraction of each fine-tune epoch drawn from the DAgger pool (rest = base).
+# Epoch length stays the base-set size.
+dagger_pool_frac: 0.3
+
+# Match metfix training recipe on each DAgger fine-tune.
+seed: 0
+device: cuda
+epochs: 10
+batch_size: 32
+lr: 5.0e-5
+min_lr: 1.0e-5
+weight_decay: 0.01
+grad_clip: 1.0
+amp: true
+compile: false
+collapse_factor: 2.5
+early_stop:
+  patience: 4
+  min_epochs: 2
+  min_delta: 0.0
+log_every: 20
+val_every: 1
+horizons: [10, 20, 30, 40, 50, 60, 70, 80]
+iou_buffers: [0.5, 1.0, 2.0]
+num_workers: 16
+resume: null
+max_train_steps: null
+
+wandb:
+  enabled: false
+  project: womd-il
+  name: null
+
+report:
+  max_scenarios: 64
+  viz_n: 0
+  neighbors: [log]
+  horizon: 80
+
+# Closed-loop collect / eval (0.1 s replan).
+collect:
+  neighbors: log
+  horizon: 80
+  h_exec: 1
+  mode_select: geomean
+  log_ade_thresh: 1.5
+  # Stride 5 = 0.5 s between saved states (same as the train window table).
+  # Cap 4 + stride 5 keeps ~1 correlated burst from dominating the pool.
+  max_per_scenario: 4
+  save_stride: 5
+  # 8k scenes × ~1 s/scene ≈ 2 h/collect. null = all 48805 ≈ 14 h/collect.
+  max_scenarios: 8000
+  flush_every: 100
+  # Scenes sharing one fp32 forward. fp16 was faster but flips the chosen mode.
+  infer_batch: 8
+  early_stop_on_fail: true
+  # Only save states that still have a full 4 s log future (t <= T-41, same
+  # bound as the train window table). flatten_l2 imitation ignores gt_valid,
+  # so a zero-padded future would supervise "stop at the origin".
+  pdms_horizon: 40
+  min_valid_frac: 0.5
+
+eval:
+  ol_max_scenarios: 256
+  cl_max_scenarios: 256
+  h_exec: 1
+  mode_select: geomean
+  neighbors: log
+  horizon: 80
+  # Keep false so progress / log_ade stay full-horizon and comparable to
+  # previous closed_loop.json dumps. Collection still early-stops on fail.
+  early_stop_on_fail: false
+  diversity_suite: configs/eval/diversity_suite.json
+  diversity_select: geomean
+
+cache:
+  batch_size: 4
+  # 0: parent holds the metric-cache HDF5 in write mode; forking workers is unsafe.
+  num_workers: 0
+
+decoder:
+  triple_parallel: true
+  metric_stopgrad: false
+  h_exec: 1
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
