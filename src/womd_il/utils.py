@@ -10,6 +10,14 @@ from omegaconf import OmegaConf
 from womd_il import constants as C
 
 
+def _config_parent(path: str) -> str:
+    return str(Path(str(path)).parent)
+
+
+if not OmegaConf.has_resolver("parent"):
+    OmegaConf.register_new_resolver("parent", _config_parent)
+
+
 def config_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "configs"
 

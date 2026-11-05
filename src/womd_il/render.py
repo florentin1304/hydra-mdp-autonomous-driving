@@ -17,7 +17,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--ckpt", type=Path, default=Path("checkpoints/best.pt"))
     p.add_argument("--h5", type=Path, default=Path("data/womd/packed/val.h5"))
-    p.add_argument("--out", type=Path, default=Path("outputs/videos"))
+    p.add_argument("--out", type=Path, default=None, help="Default: <checkpoint dir>/videos")
     p.add_argument("--n", type=int, default=6, help="How many scenarios to render")
     p.add_argument("--start", type=int, default=0)
     p.add_argument("--device", default="cuda")
@@ -28,6 +28,8 @@ def main() -> None:
     p.add_argument("--closed-loop", action="store_true", default=True)
     p.add_argument("--no-closed-loop", action="store_false", dest="closed_loop")
     args = p.parse_args()
+    if args.out is None:
+        args.out = args.ckpt.parent / "videos"
 
     device = resolve_device(args.device)
     policy, _ = load_policy_from_ckpt(args.ckpt, device=device)

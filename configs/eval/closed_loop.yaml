@@ -11,9 +11,9 @@ neighbors: log
 max_scenarios: 64
 horizon: 80
 device: cuda
-viz_dir: outputs/viz
+viz_dir: ${parent:${ckpt}}/viz_${neighbors}_${mode_select}
 viz_every: 8
-out: outputs/closed_loop.json
+out: ${parent:${ckpt}}/closed_loop_${neighbors}_${mode_select}.json
 h_exec: 1
 mode_select: geomean
 cost:
@@ -27,3 +27,5 @@ cost:
 hydra:
   job:
     chdir: false
+  run:
+    dir: ${parent:${ckpt}}
