@@ -286,7 +286,6 @@ def run_train_iter(cfg: DictConfig, iter_dir: Path, warm: Path, pool: Path, metr
     tcfg.dagger_pool = str(pool)
     tcfg.dagger_metric_cache = str(metrics)
     tcfg.dagger_pool_frac = float(cfg.get("dagger_pool_frac", 0.3))
-    tcfg.report = {"max_scenarios": 0, "viz_n": 0, "neighbors": ["log"], "horizon": 80}
     train(tcfg)
     _free_cuda()
     best = iter_dir / "best.pt"

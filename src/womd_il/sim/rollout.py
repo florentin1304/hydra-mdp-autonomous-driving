@@ -8,37 +8,42 @@ import numpy as np
 import torch
 
 from womd_il.data.transforms import inverse_agent_centric_xy, wrap_angle
-from womd_il.losses.hydra import METRIC_INDEX
 from womd_il.sim.bicycle import traj_to_actions
 from womd_il.sim.obs import features_to_batch
 from womd_il.sim.replay import PackedSimulator, SimState, _offroad
 
-# Hydra-MDP Eq. 11, same point as configs/decoder/hydra.yaml, EPO weight 0.
-# Metric sigmoids point the trained way: 1 is compliant (no collision, on road).
-_HYDRA_W_IM = 0.1
-_HYDRA_W_NC = 1.0
-_HYDRA_W_DAC = 1.0
-_HYDRA_W_RULE = 1.0
-_HYDRA_W_TTC = 5.0
-_HYDRA_W_C = 2.0
-_HYDRA_W_EP = 5.0
 
+def apply_mode_select(
+    scores: torch.Tensor, extras: dict | None, select: str
+) -> torch.Tensor:
+    """Tensor that closed-loop argmaxes for ``select``.
 
-def hydra_mdp_scores(im_scores: torch.Tensor, metric_logits: torch.Tensor) -> torch.Tensor:
-    """Score to maximize: imitation log plus NC, DAC, and the 5/2/5 rule log."""
-    mprob = torch.sigmoid(metric_logits.float())
-    s_nc = mprob[..., METRIC_INDEX["nc"]]
-    s_dac = mprob[..., METRIC_INDEX["dac"]]
-    s_ttc = mprob[..., METRIC_INDEX["ttc"]]
-    s_c = mprob[..., METRIC_INDEX["hc"]]
-    s_ep = mprob[..., METRIC_INDEX["progress"]]
-    rule = _HYDRA_W_TTC * s_ttc + _HYDRA_W_C * s_c + _HYDRA_W_EP * s_ep
-    return (
-        _HYDRA_W_IM * torch.log(im_scores.float().clamp_min(1e-6))
-        + _HYDRA_W_NC * torch.log(s_nc.clamp_min(1e-6))
-        + _HYDRA_W_DAC * torch.log(s_dac.clamp_min(1e-6))
-        + _HYDRA_W_RULE * torch.log(rule.clamp_min(1e-6))
-    )
+    ``argmax``, ``hydra``, ``hydra_mdp``, and ``hydra_mdp_w`` keep ``scores``.
+    ``infer()`` already filled those from ``decoder.weights``, including EPO.
+    ``imitation``, ``epo``, ``avg``, and ``geomean`` replace that plan.
+    """
+    extras = extras or {}
+    select = str(select)
+
+    def aligned(name: str) -> torch.Tensor | None:
+        tensor = extras.get(name)
+        if tensor is None:
+            return None
+        if scores.dim() == 1 and tensor.dim() == scores.dim() + 1:
+            return tensor[0]
+        return tensor
+
+    im = aligned("im_scores")
+    epo = aligned("epo_scores")
+    if select in ("im", "imitation", "imi") and im is not None:
+        return im
+    if select == "epo" and epo is not None:
+        return epo
+    if select in ("avg", "mean", "arith") and im is not None and epo is not None:
+        return 0.5 * im + 0.5 * epo
+    if select in ("geomean", "geometric") and im is not None and epo is not None:
+        return torch.sqrt(im.clamp_min(1e-12) * epo.clamp_min(1e-12))
+    return scores
 
 
 def _topk_indices(scores: torch.Tensor, topk: int) -> np.ndarray:
@@ -248,24 +253,11 @@ def rollout_policy(
             if select == "pdms":
                 kwargs["rank"] = "pdms"
             bundle = policy.infer(batch, **kwargs)
-            scores = bundle.scores[0]
-            pool = bundle.extras.get("pool_scores") if bundle.extras else None
+            extras = bundle.extras or {}
+            scores = apply_mode_select(bundle.scores[0], extras, select)
+            pool = extras.get("pool_scores")
             if pool is not None and select in ("cost", "occupancy"):
                 scores = pool[0]
-            # Blend / pick imitation + EPO softmax scores (mix checkpoints).
-            extras = bundle.extras or {}
-            if select in ("im", "imitation", "imi") and "im_scores" in extras:
-                scores = extras["im_scores"][0]
-            elif select in ("epo",) and "epo_scores" in extras:
-                scores = extras["epo_scores"][0]
-            elif select in ("avg", "mean", "arith") and "im_scores" in extras and "epo_scores" in extras:
-                scores = 0.5 * extras["im_scores"][0] + 0.5 * extras["epo_scores"][0]
-            elif select in ("geomean", "geometric") and "im_scores" in extras and "epo_scores" in extras:
-                im_s = extras["im_scores"][0].clamp_min(1e-12)
-                epo_s = extras["epo_scores"][0].clamp_min(1e-12)
-                scores = torch.sqrt(im_s * epo_s)
-            elif select in ("hydra", "hydra_mdp") and "im_scores" in extras and "metric_logits" in extras:
-                scores = hydra_mdp_scores(extras["im_scores"][0], extras["metric_logits"][0])
             origin = batch["current_xyh_world"][0].detach().cpu().numpy()
             if select == "occupancy":
                 k = _occupancy_mode(scores, bundle.xyh[0], origin, sim)

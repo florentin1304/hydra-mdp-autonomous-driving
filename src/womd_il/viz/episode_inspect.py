@@ -291,7 +291,7 @@ def capture_episode(
     device: str = "cuda",
     horizon: int = 80,
     h_exec: int = 1,
-    mode_select: str = "geomean",
+    mode_select: str = "hydra_mdp_w",
     neighbors: str = "log",
     early_stop_on_fail: bool = True,
     cache_path: str | Path | None = None,

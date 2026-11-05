@@ -19,7 +19,7 @@ from womd_il.data.transforms import inverse_agent_centric_xy, wrap_angle
 from womd_il.losses.hydra import METRIC_NAMES, _PDM_T
 from womd_il.sim.obs import features_to_batch
 from womd_il.sim.replay import PackedSimulator
-from womd_il.sim.rollout import traj_to_actions
+from womd_il.sim.rollout import apply_mode_select, traj_to_actions
 
 
 POOL_VERSION = 1
@@ -152,17 +152,7 @@ def patch_ego_track(
 
 def select_mode_scores(scores: torch.Tensor, bundle, select: str) -> torch.Tensor:
     """Per-scene scores [B, K] used to pick the executed mode."""
-    extras = bundle.extras or {}
-    s = scores
-    if select in ("im", "imitation", "imi") and "im_scores" in extras:
-        s = extras["im_scores"]
-    elif select in ("epo",) and "epo_scores" in extras:
-        s = extras["epo_scores"]
-    elif select in ("avg", "mean", "arith") and "im_scores" in extras and "epo_scores" in extras:
-        s = 0.5 * extras["im_scores"] + 0.5 * extras["epo_scores"]
-    elif select in ("geomean", "geometric") and "im_scores" in extras and "epo_scores" in extras:
-        s = torch.sqrt(extras["im_scores"].clamp_min(1e-12) * extras["epo_scores"].clamp_min(1e-12))
-    return s
+    return apply_mode_select(scores, getattr(bundle, "extras", None), select)
 
 
 def select_mode_index(scores: torch.Tensor, bundle, select: str) -> int:
@@ -195,7 +185,7 @@ def collect_scenario_rows(
     neighbors: str = "log",
     horizon: int = 80,
     h_exec: int = 1,
-    mode_select: str = "geomean",
+    mode_select: str = "hydra_mdp_w",
     log_ade_thresh: float = 1.5,
     max_per_scenario: int = 16,
     pdms_horizon: int = _PDM_T,
@@ -481,7 +471,7 @@ def collect_dagger_pool(
     neighbors: str = "log",
     horizon: int = 80,
     h_exec: int = 1,
-    mode_select: str = "geomean",
+    mode_select: str = "hydra_mdp_w",
     log_ade_thresh: float = 1.5,
     max_per_scenario: int = 16,
     pdms_horizon: int = _PDM_T,

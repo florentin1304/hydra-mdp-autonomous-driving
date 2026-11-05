@@ -34,8 +34,6 @@ collision_weight: 0.0
 pdms_scale: 0.0
 # At most 12 train windows per vocab class (~48k, same epoch length as 48805/32).
 subsample_cap: 12
-# Optional ADE/PDMS winner cache for class subsample when windows_path is unset.
-winner_cache: null
 # false: metric BCE backprops into encoder (better NC/DAC); true: heads-only.
 metric_stopgrad: false
 # Multiply metric BCE before adding to policy loss (use <1 when unfreezing trunk).
@@ -48,9 +46,9 @@ metric_pos_weight_cap: null
 metric_head_layers: 3
 metric_head_hidden: 256
 # One-stage: empty prune_to scores the full vocab once (no LDiP cascade).
-# For LDiP: prune_to: [256, 16] with gumbel_tau: 1.0
+# For LDiP: prune_to: [256, 16] and gumbel_tau: 1.0
 prune_to: []
-gumbel_tau: 1.0
+gumbel_tau: 0.0
 nms_radius: 0.0
 keep_winner: false
 hard_last: false
@@ -61,17 +59,19 @@ xy_scale: 10.0
 vocab_self_attn_layers: 0
 cross_only: true
 # Traj queries → agents then map. Needs model.factorized=true.
-dual_cross: false
+# triple_cross forces this on; the live model is triple-cross.
+dual_cross: true
 # Traj queries → map → ego → neighbours. Needs factorized + ego_tokens
 # (model.ego_in_social=true recommended). Overrides dual order when true.
 triple_cross: true
 # Parallel map/ego/agent cross + concat-MLP fuse per layer (vs sequential).
 # Requires triple_cross. Fuse last Linear is zero-init (residual identity at start).
-triple_parallel: false
+triple_parallel: true
 # Per-mode query fusion: Q = traj + MLP(concat(traj, ego)) with traj skip.
 # Set false for traj-only queries (ego only via KV / triple_cross).
 ego_on_query: true
-h_exec: 40
+# Closed-loop commit steps. 1 = replan every 0.1 s.
+h_exec: 1
 cl_select: hydra_mdp_w
 weights:
   # hydra_mdp_w *selection* only (not train loss scales — see *_loss_scale above).

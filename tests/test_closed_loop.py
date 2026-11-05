@@ -126,6 +126,24 @@ def test_lqr_tracks_speed_profile_without_clip():
     assert abs(x - v * 4.0) < 2.0
 
 
+def test_hydra_select_keeps_weighted_scores_geomean_does_not():
+    from womd_il.sim.rollout import apply_mode_select
+
+    # infer() scores already include decoder.weights (imitation + EPO + metrics).
+    scores = torch.tensor([0.1, 0.9])
+    im = torch.tensor([[0.9, 0.1]])
+    epo = torch.tensor([[0.2, 0.8]])
+    extras = {"im_scores": im, "epo_scores": epo}
+    for name in ("argmax", "hydra", "hydra_mdp", "hydra_mdp_w"):
+        out = apply_mode_select(scores, extras, name)
+        assert torch.equal(out, scores)
+    geo = apply_mode_select(scores, extras, "geomean")
+    expect = torch.sqrt(im[0].clamp_min(1e-12) * epo[0].clamp_min(1e-12))
+    assert torch.allclose(geo, expect)
+    assert int(torch.argmax(scores)) == 1
+    assert int(torch.argmax(geo)) == 0
+
+
 def test_inverse_clips_when_plan_is_faster_lqr_does_not_catch_up():
     dt = 0.1
     v_plan = 8.0

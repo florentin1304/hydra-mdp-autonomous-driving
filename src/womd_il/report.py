@@ -200,11 +200,19 @@ def run_end_of_training_report(
     if h_exec is None:
         h_exec = int(getattr(decoder, "h_exec", 1) or 1)
     raw_select = str(getattr(decoder, "cl_select", "argmax") or "argmax")
-    mode_select = (
-        "argmax"
-        if raw_select in ("argmax", "epdms", "pdms", "imitation", "hydra_mdp_w")
-        else raw_select
-    )
+    # infer() scores are already the weighted Hydra plan, so these names argmax it.
+    # imitation / pdms / geomean stay themselves and are applied in the rollout.
+    mode_select = {
+        "argmax": "argmax",
+        "hydra": "argmax",
+        "hydra_mdp": "argmax",
+        "hydra_mdp_w": "argmax",
+        "epdms": "pdms",
+        "pdms": "pdms",
+        "im": "imitation",
+        "imi": "imitation",
+        "imitation": "imitation",
+    }.get(raw_select, raw_select)
     cost = {"topk": 256, "look_ahead": 20, "w_ov": 16.0, "w_off": 8.0, "w_speed": 0.2, "w_im": 1.0}
     report: dict[str, Any] = {"closed_loop": {}, "videos": []}
     for neigh in neighbors:

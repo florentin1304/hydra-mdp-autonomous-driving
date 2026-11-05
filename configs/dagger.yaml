@@ -7,7 +7,8 @@ defaults:
 # Iteration 0 = existing trained checkpoint (eval only, then collect).
 init_ckpt: checkpoints/hydra_4s_sde_triple_par_metfix/best.pt
 ckpt_root: checkpoints/hydra_4s_dagger
-n_iters: 3
+# range(0, n_iters + 1): iters 0–4, matching the finished run.
+n_iters: 4
 # Fraction of each fine-tune epoch drawn from the DAgger pool (rest = base).
 # Epoch length stays the base-set size.
 dagger_pool_frac: 0.3
@@ -41,8 +42,9 @@ wandb:
   project: womd-il
   name: null
 
+# Off during fine-tunes. Each iter has its own eval block below.
 report:
-  max_scenarios: 64
+  max_scenarios: 0
   viz_n: 0
   neighbors: [log]
   horizon: 80
@@ -52,7 +54,7 @@ collect:
   neighbors: log
   horizon: 80
   h_exec: 1
-  mode_select: geomean
+  mode_select: hydra_mdp_w
   log_ade_thresh: 1.5
   # Stride 5 = 0.5 s between saved states (same as the train window table).
   # Cap 4 + stride 5 keeps ~1 correlated burst from dominating the pool.
@@ -74,24 +76,19 @@ eval:
   ol_max_scenarios: 256
   cl_max_scenarios: 256
   h_exec: 1
-  mode_select: geomean
+  mode_select: hydra_mdp_w
   neighbors: log
   horizon: 80
   # Keep false so progress / log_ade stay full-horizon and comparable to
   # previous closed_loop.json dumps. Collection still early-stops on fail.
   early_stop_on_fail: false
   diversity_suite: configs/eval/diversity_suite.json
-  diversity_select: geomean
+  diversity_select: hydra_mdp_w
 
 cache:
   batch_size: 4
   # 0: parent holds the metric-cache HDF5 in write mode; forking workers is unsafe.
   num_workers: 0
-
-decoder:
-  triple_parallel: true
-  metric_stopgrad: false
-  h_exec: 1
 
 hydra:
   job:

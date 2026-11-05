@@ -15,14 +15,8 @@ viz_dir: ${parent:${ckpt}}/viz_${neighbors}_${mode_select}
 viz_every: 8
 out: ${parent:${ckpt}}/closed_loop_${neighbors}_${mode_select}.json
 h_exec: 1
-mode_select: geomean
-cost:
-  topk: 256
-  look_ahead: 20
-  w_im: 1.0
-  w_ov: 16.0
-  w_speed: 0.2
-  w_off: 8.0
+# argmax of infer() scores. Those already apply decoder.weights, including epo.
+mode_select: hydra_mdp_w
 
 hydra:
   job:
