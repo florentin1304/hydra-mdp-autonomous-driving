@@ -1,5 +1,4 @@
 root: data/womd
-raw_dir: ${data.root}/raw
 packed_dir: ${data.root}/packed
 train_file: ${data.packed_dir}/train.h5
 val_file: ${data.packed_dir}/val.h5
@@ -17,7 +16,6 @@ future_steps: 80
 current_step: 10
 dt: 0.1
 target_mode: sdc
-num_workers: 16
 # Pose jitter (train only): rebuild agent-centric tensors, supervise log future.
 # Default off. Gaussian via xy_std/yaw_std, or PlanTF uniform via
 # dist=uniform + lon/lat/yaw_{low,high} (see apply_origin_perturb).

@@ -8,7 +8,6 @@ defaults:
 ckpt: checkpoints/hydra_4s/best.pt
 split: val
 neighbors: log
-backend: packed
 max_scenarios: 64
 horizon: 80
 device: cuda

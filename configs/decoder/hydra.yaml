@@ -42,9 +42,6 @@ metric_stopgrad: false
 metric_loss_scale: 1.0
 # Balanced BCE: w1=1/(2p), w0=1/(2(1-p)) so rare class (usually failures) counts.
 metric_class_weighted: true
-# P(y=1) from cumulative label counts (converges to the data prior). Legacy name;
-# EMA is no longer used.
-metric_rate_ema: 0.0
 # Optional clamp on each of w0/w1 (e.g. 10) when metric_stopgrad=false.
 metric_pos_weight_cap: null
 # Per-metric MLP (fused GEMM / bmm over M — heads run together, not a loop).

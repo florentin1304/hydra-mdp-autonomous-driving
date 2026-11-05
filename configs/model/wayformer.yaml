@@ -6,7 +6,6 @@ dropout: 0.1
 # 0 = decoder attends packed / factorized scene tokens (no Perceiver latents).
 num_latents: 0
 encoder_layers: 2
-decoder_layers: 4
 hist_in_dim: 18
 map_in_dim: 26
 tl_in_dim: 11
@@ -15,8 +14,6 @@ route_in_dim: 3
 # Mission via on-route lane bit in map features — no preferred-path XY tokens.
 use_route_tokens: false
 drop_ego_hist: false
-# Legacy mlp-path kin drop (unused when ego_encoder=sde).
-ego_kin_dropout: 0.0
 # Ego token: mlp | sde (PlanTF StateAttentionEncoder).
 ego_encoder: sde
 # Channel drop on speed/ax/ay inside SDE (pose channels always kept).
