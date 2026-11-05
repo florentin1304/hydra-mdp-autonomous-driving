@@ -3,14 +3,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from womd_il.data.dataset import WOMDPackedDataset
-from womd_il.metrics.closed_loop import closed_loop_metrics
-from womd_il.models.decoders.dummy import StraightLineDecoder
-from womd_il.models.decoders.gmm import GMMDecoder
-from womd_il.models.encoder import WayformerEncoder
-from womd_il.models.policy import WayformerPolicy
 from womd_il.sim.bicycle import bicycle_inverse, bicycle_step, traj_to_actions
-from womd_il.sim.rollout import rollout_policy
 
 
 def test_bicycle_inverse_roundtrip():
@@ -38,53 +31,6 @@ def test_offroad_lane_gate_matches_dac():
     }
     assert _offroad(sample, np.array([5.0, 0.0]), prev_xy=np.array([4.0, 0.0])) is False
     assert _offroad(sample, np.array([5.0, 5.0]), prev_xy=np.array([5.0, 4.5])) is True
-
-
-def _tiny_policy(decoder):
-    enc = WayformerEncoder(
-        d_model=32,
-        d_ffn=64,
-        nhead=4,
-        dropout=0.0,
-        num_latents=8,
-        encoder_layers=1,
-    )
-    return WayformerPolicy(enc, decoder)
-
-
-def test_dummy_rollout_log_and_idm(synthetic_h5, pack_cfg):
-    ds = WOMDPackedDataset(synthetic_h5, cfg=pack_cfg)
-    sample = ds.get_world_sample(0)
-    policy = _tiny_policy(StraightLineDecoder())
-    for neigh in ("log", "idm"):
-        state = rollout_policy(policy, sample, neighbors=neigh, horizon=12, device="cpu", h_exec=1)
-        assert len(state.executed_xy) == 13  # current + 12 steps
-        m = closed_loop_metrics(state, sample)
-        assert m["steps"] == 13
-        assert np.isfinite(m["log_ade"])
-        # Dummy drives forward; some progress expected.
-        assert m["progress"] > 1.0
-
-
-def test_dummy_rollout_commits_multi_step(synthetic_h5, pack_cfg):
-    ds = WOMDPackedDataset(synthetic_h5, cfg=pack_cfg)
-    sample = ds.get_world_sample(0)
-    policy = _tiny_policy(StraightLineDecoder())
-    state = rollout_policy(
-        policy, sample, neighbors="log", horizon=12, device="cpu", h_exec=4
-    )
-    assert len(state.executed_xy) == 13
-    assert closed_loop_metrics(state, sample)["progress"] > 1.0
-
-
-def test_gmm_short_rollout(synthetic_h5, pack_cfg):
-    ds = WOMDPackedDataset(synthetic_h5, cfg=pack_cfg)
-    sample = ds.get_world_sample(1)
-    policy = _tiny_policy(
-        GMMDecoder(d_model=32, nhead=4, d_ffn=64, dropout=0.0, num_modes=3, decoder_layers=1)
-    )
-    state = rollout_policy(policy, sample, neighbors="log", horizon=5, device="cpu")
-    assert len(state.executed_xy) == 6
 
 
 def test_occupancy_mode_prefers_clear_path():

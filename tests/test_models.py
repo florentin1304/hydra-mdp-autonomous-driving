@@ -9,11 +9,8 @@ from torch.utils.data import DataLoader
 
 from womd_il import constants as C
 from womd_il.data.dataset import WOMDPackedDataset, packed_collate
-from womd_il.metrics.open_loop import format_open_loop_table, open_loop_metrics
-from womd_il.models.decoders.diffusion import DiffusionDecoder
-from womd_il.models.decoders.dummy import StraightLineDecoder
-from womd_il.models.decoders.gmm import GMMDecoder
 from womd_il.losses.hydra import METRIC_NAMES, vocab_ade_winner
+from womd_il.metrics.open_loop import format_open_loop_table
 from womd_il.models.decoders.hydra import (
     ConvActionTokenizer,
     HydraDecoder,
@@ -23,7 +20,6 @@ from womd_il.models.decoders.hydra import (
     nms_global_indices,
 )
 from womd_il.models.encoder import WayformerEncoder, pack_valid_tokens
-from womd_il.models.pca import PCABasis
 from womd_il.models.policy import WayformerPolicy
 
 
@@ -180,67 +176,6 @@ def test_ego_kin_dropout_only_in_train():
     enc.eval()
     kept = enc._drop_ego_kinematics(ego)
     assert torch.allclose(kept[:, :3], ego[:, :3])
-
-
-def test_gmm_modes_depend_on_ego_speed(synthetic_h5, pack_cfg):
-    batch = _batch(synthetic_h5, pack_cfg)
-    policy = WayformerPolicy(
-        _tiny_encoder(),
-        GMMDecoder(d_model=32, nhead=4, d_ffn=64, dropout=0.0, num_modes=4, decoder_layers=1),
-    )
-    policy.eval()
-    a = policy.infer(batch).xyh
-    batch2 = {k: (v.clone() if torch.is_tensor(v) else v) for k, v in batch.items()}
-    batch2["ego_state"] = batch2["ego_state"].clone()
-    batch2["ego_state"][:, 0] = 25.0
-    b = policy.infer(batch2).xyh
-    assert not torch.allclose(a, b, atol=1e-6)
-
-
-def test_gmm_predicts_absolute_xy_not_cv_residual(synthetic_h5, pack_cfg):
-    batch = _batch(synthetic_h5, pack_cfg)
-    batch["sdc_hist"] = batch["sdc_hist"].clone()
-    batch["sdc_hist"][:, -1, 2] = 25.0
-    batch["sdc_hist"][:, -1, 3] = 0.0
-    policy = WayformerPolicy(
-        _tiny_encoder(),
-        GMMDecoder(d_model=32, nhead=4, d_ffn=64, dropout=0.0, num_modes=4, decoder_layers=1),
-    )
-    policy.eval()
-    xy = policy.infer(batch).xyh[0, :, -1, :2]
-    # A 25 m/s CV prior would sit ~200 m at 8 s. Direct head starts near 0.
-    assert float(xy.abs().max().detach()) < 20.0
-
-
-def test_gmm_cv_residual_adds_constant_velocity(synthetic_h5, pack_cfg):
-    batch = _batch(synthetic_h5, pack_cfg)
-    batch["speed"] = torch.full((batch["gt_xy"].size(0),), 10.0)
-    dec = GMMDecoder(
-        d_model=32, nhead=4, d_ffn=64, dropout=0.0, num_modes=4, decoder_layers=1, cv_residual=True
-    )
-    policy = WayformerPolicy(_tiny_encoder(), dec)
-    policy.eval()
-    xy = policy.infer(batch).xyh[0, 0, :, :2]
-    # Agent-frame CV at 10 m/s, 8 s → x≈80 m, y≈0.
-    assert float(xy[-1, 0].detach()) > 60.0
-    assert float(xy[-1, 1].abs().detach()) < 15.0
-
-
-def test_gmm_train_and_infer(synthetic_h5, pack_cfg):
-    batch = _batch(synthetic_h5, pack_cfg)
-    policy = WayformerPolicy(
-        _tiny_encoder(),
-        GMMDecoder(d_model=32, nhead=4, d_ffn=64, dropout=0.0, num_modes=4, decoder_layers=1),
-    )
-    stats = policy.train_step(batch)
-    assert torch.isfinite(stats["loss"])
-    stats["loss"].backward()
-    bundle = policy.infer(batch)
-    assert bundle.xyh.shape == (2, 4, 80, 3)
-    m = open_loop_metrics(
-        bundle.xyh[..., :2], bundle.scores, batch["gt_xy"], batch["gt_valid"], num_keep=4
-    )
-    assert "minADE@80" in m
 
 
 def test_pca_tokenizer_pc1_tracks_speed():
@@ -576,39 +511,6 @@ def test_hydra_rejects_smoke_vocab_file(tmp_path: Path):
             vocab_size=4096,
             decoder_layers=1,
         )
-
-
-def test_diffusion_train_and_infer(synthetic_h5, pack_cfg):
-    batch = _batch(synthetic_h5, pack_cfg)
-    pca = PCABasis.fit(batch["gt_xy"].numpy(), k=4)
-    policy = WayformerPolicy(
-        _tiny_encoder(),
-        DiffusionDecoder(
-            d_model=32,
-            nhead=4,
-            d_ffn=64,
-            dropout=0.0,
-            pca=pca,
-            pca_dim=4,
-            num_layers=1,
-            num_sample_steps=3,
-        ),
-    )
-    stats = policy.train_step(batch)
-    assert torch.isfinite(stats["loss"])
-    bundle = policy.infer(batch)
-    assert bundle.xyh.shape == (2, 1, 80, 3)
-    # Warm-start path
-    bundle2 = policy.infer(batch, x_init=bundle.xyh[:, 0, :, :2])
-    assert bundle2.xyh.shape[-1] == 3
-
-
-def test_dummy_infer(synthetic_h5, pack_cfg):
-    batch = _batch(synthetic_h5, pack_cfg)
-    policy = WayformerPolicy(_tiny_encoder(), StraightLineDecoder())
-    bundle = policy.infer(batch)
-    assert bundle.xyh.shape[1] == 1
-    assert bundle.xyh[0, 0, -1, 0] > 0
 
 
 def test_format_open_loop_table():

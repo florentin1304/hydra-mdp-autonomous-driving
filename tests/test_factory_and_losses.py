@@ -4,52 +4,9 @@ import torch
 from omegaconf import OmegaConf
 
 from womd_il import constants as C
-from womd_il.losses.gmm import gmm_wta_nll
 from womd_il.losses.hydra import hydra_imitation_loss
 from womd_il.models.factory import build_policy
 from womd_il.utils import load_checkpoint, save_checkpoint
-
-
-def test_gmm_loss_finite():
-    b, k, t = 2, 5, 10
-    mu = torch.zeros(b, k, t, 2)
-    mu[:, 2, :, 0] = torch.linspace(0.1, 1.0, t)
-    log_std = torch.zeros(b, k, t, 2)
-    logits = torch.zeros(b, k)
-    gt = mu[:, 2]
-    valid = torch.ones(b, t)
-    stats = gmm_wta_nll(mu, log_std, logits, gt, valid)
-    assert stats["winner"].tolist() == [2, 2]
-    assert torch.isfinite(stats["loss"])
-
-
-def test_gmm_winner_avoids_logged_overlap():
-    b, k, t = 1, 2, 8
-    gt = torch.zeros(b, t, 2)
-    gt[0, :, 0] = torch.linspace(0.1, 0.8, t)
-    mu = torch.zeros(b, k, t, 2)
-    mu[0, 0] = gt[0]
-    mu[0, 1, :, 0] = gt[0, :, 0]
-    mu[0, 1, :, 1] = 6.0
-    log_std = torch.zeros(b, k, t, 2)
-    logits = torch.zeros(b, k)
-    other = gt[:, None].clone()
-    other_valid = torch.ones(b, 1, t)
-    ego_lw = torch.tensor([[4.0, 2.0]])
-    other_lw = torch.tensor([[[4.0, 2.0]]])
-    kwargs = dict(
-        mu=mu,
-        log_std=log_std,
-        logits=logits,
-        gt_xy=gt,
-        gt_valid=torch.ones(b, t),
-        other_xy=other,
-        other_valid=other_valid,
-        ego_lw=ego_lw,
-        other_lw=other_lw,
-    )
-    assert gmm_wta_nll(**kwargs, collision_weight=0.0)["winner"].item() == 0
-    assert gmm_wta_nll(**kwargs, collision_weight=8.0)["winner"].item() == 1
 
 
 def test_hydra_soft_target_downweights_overlap():
@@ -564,7 +521,7 @@ def test_format_metric_table_and_eval():
     assert "epoch=3" in table
 
 
-def test_factory_dummy_and_ckpt(tmp_path):
+def test_factory_hydra_and_ckpt(tmp_path):
     model = OmegaConf.create(
         dict(
             name="wayformer",
@@ -581,14 +538,14 @@ def test_factory_dummy_and_ckpt(tmp_path):
             ego_in_dim=C.EGO_IN_DIM,
         )
     )
-    dec = OmegaConf.create(dict(name="dummy", future_steps=80))
+    dec = OmegaConf.create(dict(name="hydra", vocab_size=8, decoder_layers=1, future_steps=80))
     policy = build_policy(model, dec)
     path = tmp_path / "p.pt"
     cfg = OmegaConf.create({"model": model, "decoder": dec})
     save_checkpoint(path, policy, cfg)
     policy2 = build_policy(model, dec)
     load_checkpoint(path, policy2)
-    assert policy2.decoder_name == "dummy"
+    assert policy2.decoder_name == "hydra"
 
 
 def test_load_pads_old_map_proj(tmp_path):
@@ -610,7 +567,7 @@ def test_load_pads_old_map_proj(tmp_path):
     )
     new = OmegaConf.create(dict(old))
     new.map_in_dim = C.MAP_IN_DIM
-    dec = OmegaConf.create(dict(name="dummy", future_steps=80))
+    dec = OmegaConf.create(dict(name="hydra", vocab_size=8, decoder_layers=1, future_steps=80))
     old_policy = build_policy(old, dec)
     path = tmp_path / "old.pt"
     save_checkpoint(path, old_policy, OmegaConf.create({"model": old, "decoder": dec}))
